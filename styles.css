@@ -832,11 +832,71 @@ main { padding-bottom: calc(24px + env(safe-area-inset-bottom)); gap: 14px; }
 
 .info-sheet { max-width: 420px; }
 
-/* Selector de mes: que siempre se vea el año, aunque la columna sea estrecha */
-input[type="month"] { padding-inline: 6px !important; letter-spacing: -.02em; }
-input[type="month"]::-webkit-calendar-picker-indicator { margin: 0; padding: 0; width: 13px; }
-.item { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) 34px; }
 
 /* Las tablas anchas no deben ensanchar sus contenedores */
 .group, .scs, .sc-body, .list { grid-template-columns: minmax(0, 1fr); }
 .sc, .years-d, .y-scroll { min-width: 0; }
+
+/* Balance de cada plan: lo que ahorras y lo que pierdes, con su signo */
+.neg-t { color: var(--neg); }
+.bridge { display: grid; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 14px; }
+.sc-body .bridge { margin-top: 0; padding-top: 0; border-top: 0; }
+.br-row { display: flex; justify-content: space-between; gap: 12px; }
+.br-row b { font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.br-total { margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--line); font-weight: 500; }
+.bars-card { padding: 14px; display: grid; gap: 12px; }
+.bars-card p { margin: 0; }
+.bb { display: grid; gap: 5px; }
+.bb-head { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.bb-head b { font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bb-track { position: relative; height: 18px; }
+.bb-track i { position: absolute; top: 3px; height: 12px; }
+.bb-neg { background: var(--neg); border-radius: 4px 0 0 4px; }
+.bb-pos { background: var(--accent); border-radius: 0 4px 4px 0; }
+.bb-zero { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--muted); }
+.bb-net { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--text); box-shadow: 0 0 0 2px var(--surface-solid); }
+.bb-foot { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.legend i.key { position: static; display: inline-block; width: 14px; height: 10px; }
+.legend i.key.bb-neg, .legend i.key.bb-pos { border-radius: 3px; }
+.key-net { display: inline-block; width: 3px; height: 12px; border-radius: 2px; background: var(--text); }
+.y-table .tr-total td { font-weight: 600; border-top: 1px solid var(--muted); }
+.y-table .tr-sub td:not(:first-child) { color: var(--ok); }
+
+/* Campos homogéneos: misma altura, mismo texto y centrado, con la etiqueta siempre en una línea.
+   iOS da a las fechas un ancho propio que desborda la columna si no se quita su aspecto nativo. */
+.grid2, .grid3 { align-items: start; }
+.grid2 > *, .grid3 > *, .field, .unit { min-width: 0; }
+.field { justify-content: flex-start; }
+.field > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.field input, .field select, .item input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 42px;
+  margin: 0;
+  padding: 0 8px;
+  line-height: normal;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  text-align-last: center;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.field .unit input, .item .unit input { padding-inline: 26px; }
+.field input[type="month"], .item input[type="month"] { position: relative; padding-inline: 2px; }
+input[type="month"]::-webkit-date-and-time-value { min-height: 1.2em; margin: 0; text-align: center; }
+input[type="month"]::-webkit-datetime-edit { justify-content: center; }
+/* En ordenador, el calendario se abre tocando todo el campo y el icono no descentra la fecha */
+input[type="month"]::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: auto; height: auto; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+.item { grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) 34px; }
+.field small { text-align: center; }

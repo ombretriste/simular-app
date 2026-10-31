@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.1.x; novedades: 0.x.0.
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.1.2';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca datos de la app.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -62,7 +62,7 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = (n, d = 2) => (n || 0).toLocaleString(LOCALE, { minimumFractionDigits: d, maximumFractionDigits: d, useGrouping: 'always' });
 const money = (n) => `${num(n)} €`;
-const money0 = (n) => `${num(n, 0)} €`;
+const money0 = (n) => `${num(n, 0).replace("-", "−")} €`;
 const pct = (p, d = 2) => `${num(p, d)} %`;
 const formatInput = (n) => (n || n === 0 ? String(n).replace('.', ',') : '');
 const ymShort = (ym) => `${MONTHS_SHORT[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
@@ -260,6 +260,63 @@ function scenariosOf(l, ctx) {
 const modeText = (m) => (m === 'term' ? 'reduce plazo' : 'reduce cuota');
 const costOf = (l, r) => (l.budget.goal === 'vp' ? r.vp : r.carga);
 const goalName = (l) => (l.budget.goal === 'vp' ? 'Coste en valor actual' : 'Carga financiera');
+const signed = (v) => `${v > 0.5 ? '+' : v < -0.5 ? '−' : ''}${money0(Math.abs(v))}`;
+
+// Lo que gana y lo que pierde un plan frente a no amortizar: cada concepto con su signo
+function bridgeOf(base, r) {
+  const interest = base.interest - r.interest;
+  const ins = base.ins - r.ins;
+  const fees = base.fees - r.fees;
+  const ded = r.ded - base.ded;
+  return {
+    rows: [
+      [interest >= 0 ? 'Intereses que te ahorras' : 'Intereses de más', interest],
+      [ins >= 0 ? 'Seguros que te ahorras' : 'Seguros de más', ins],
+      ['Comisiones que pagas', fees],
+      [ded < 0 ? 'Deducción que pierdes' : 'Deducción que ganas', ded],
+    ].filter(([, x]) => Math.abs(x) >= 0.5),
+    gain: Math.max(0, interest) + Math.max(0, ins) + Math.max(0, ded),
+    loss: Math.max(0, -interest) + Math.max(0, -ins) - fees + Math.max(0, -ded),
+    net: base.carga - r.carga,
+  };
+}
+function bridgeHTML(base, r) {
+  const b = bridgeOf(base, r);
+  return `<div class="bridge">
+    ${b.rows.map(([n, x]) => `<div class="br-row"><span>${n}</span><b class="${x > 0 ? 'ok' : 'neg-t'}">${signed(x)}</b></div>`).join('')}
+    <div class="br-row br-total"><span>${b.net >= 0 ? 'Ahorro neto' : 'Pérdida neta'}</span><b class="${b.net >= 0 ? 'ok' : 'neg-t'}">${signed(b.net)}</b></div>
+  </div>`;
+}
+
+// Barras divergentes: a la derecha lo que ahorras, a la izquierda lo que pierdes, y la marca del resultado
+function balanceBars(list, base) {
+  const rows = list.filter((s) => s.id !== 'base' && s.items.length).map((s) => ({ s, b: bridgeOf(base.r, s.r) }));
+  if (!rows.length) return '';
+  const maxGain = Math.max(...rows.map((x) => x.b.gain), 1);
+  const maxLoss = Math.max(...rows.map((x) => x.b.loss), 0);
+  const span = maxGain + maxLoss;
+  const zero = (maxLoss / span) * 100;
+  const pos = (v) => zero + (v / span) * 100;
+  return `
+    <div class="card bars-card">
+      <p class="label">Qué ganas y qué pierdes</p>
+      <p class="small muted">Cada plan frente a no amortizar.</p>
+      ${rows.map(({ s, b }) => `
+        <div class="bb">
+          <div class="bb-head"><span>${esc(s.name)}</span><b class="${b.net >= 0 ? 'ok' : 'neg-t'}">${signed(b.net)}</b></div>
+          <div class="bb-track">
+            <span class="bb-zero" style="left:${zero}%"></span>
+            ${b.loss ? `<i class="bb-neg" style="left:${pos(-b.loss)}%;width:calc(${(b.loss / span) * 100}% - 1px)" title="Pierdes ${money0(b.loss)}"></i>` : ''}
+            <i class="bb-pos" style="left:calc(${zero}% + 1px);width:calc(${(b.gain / span) * 100}% - 1px)" title="Ahorras ${money0(b.gain)}"></i>
+            <span class="bb-net" style="left:${pos(b.net)}%" title="Resultado ${signed(b.net)}"></span>
+          </div>
+          <div class="bb-foot"><span>${b.loss >= 0.5 ? `Pierdes ${money0(b.loss)}` : 'No pierdes nada'}</span><span>Ahorras ${money0(b.gain)}</span></div>
+        </div>`).join('')}
+      <div class="legend">
+        <span><i class="key bb-neg"></i>Pierdes</span><span><i class="key bb-pos"></i>Ahorras</span><span><i class="key-net"></i>Resultado</span>
+      </div>
+    </div>`;
+}
 
 // ---------- Pantallas ----------
 
@@ -295,8 +352,8 @@ function viewDatos(l) {
           <div class="span2">${field('Nombre', 'name', l.name, { type: 'text' })}</div>
           ${field('Capital pendiente hoy', 'balance', l.balance, { unit: '€' })}
           ${field('Próxima cuota', 'nextPay', l.nextPay, { type: 'month' })}
-          ${field('Plazo restante: años', 'years', l.years)}
-          ${field('y meses', 'months', l.months)}
+          ${field('Plazo: años', 'years', l.years)}
+          ${field('Meses', 'months', l.months)}
         </div>
       </div>
     </section>
@@ -305,9 +362,9 @@ function viewDatos(l) {
       <div class="card form">
         ${seg('rateType', l.rateType, [['fixed', 'Fijo'], ['variable', 'Variable'], ['mixed', 'Mixto']], 'Tipo de interés')}
         <div class="grid2">
-          ${field(l.rateType === 'fixed' ? 'Interés (TIN)' : l.rateType === 'variable' ? 'Interés actual (TIN)' : 'Interés fijo actual (TIN)', 'tin', l.tin, { unit: '%' })}
+          ${field(l.rateType === 'fixed' ? 'Interés (TIN)' : l.rateType === 'variable' ? 'Interés (TIN)' : 'Interés fijo (TIN)', 'tin', l.tin, { unit: '%' })}
           ${l.rateType === 'fixed' ? '' : `
-            ${field('Diferencial sobre Euribor', 'spread', l.spread, { unit: '%' })}
+            ${field('Diferencial', 'spread', l.spread, { unit: '%' })}
             ${field(l.rateType === 'mixed' ? 'Empieza el variable' : 'Próxima revisión', 'nextReview', l.nextReview, { type: 'month' })}
             ${select('Revisión', 'review', l.review, [[12, 'Anual'], [6, 'Semestral']], true)}`}
         </div>
@@ -318,9 +375,9 @@ function viewDatos(l) {
       <p class="label">Gastos del préstamo</p>
       <div class="card form">
         <div class="grid2">
-          ${field('Comisión por amortizar', 'feePct', l.feePct, { unit: '%' })}
-          ${field('Seguros vinculados al año', 'insurance', l.insurance, { unit: '€' })}
-          ${field('Comisión desde el corte', 'feeAfterPct', l.feeAfterPct, { unit: '%' })}
+          ${field('Comisión', 'feePct', l.feePct, { unit: '%' })}
+          ${field('Seguros al año', 'insurance', l.insurance, { unit: '€' })}
+          ${field('Comisión tras corte', 'feeAfterPct', l.feeAfterPct, { unit: '%' })}
           ${field('Fecha de corte', 'feeUntil', l.feeUntil, { type: 'month' })}
         </div>
         <p class="small muted">Mira tu escritura. Máximos de la Ley 5/2019 (firmas desde el 16-6-2019) y solo si el banco tiene pérdida: <b>fijo</b>, 2 % los 10 primeros años y 1,5 % después; <b>variable</b>, 0,25 % los 3 primeros años o 0,15 % los 5 primeros, y 0 después.</p>
@@ -334,7 +391,7 @@ function viewDatos(l) {
         <p class="hero-sub">Terminas en ${ymLong(tToYm(end.endT))}</p>
         <div class="hero-stats">
           <span><b>${money0(end.interest)}</b><small>Intereses</small></span>
-          <span><b>${money0(end.ded)}</b><small>Deducción</small></span>
+          <span><b>${end.ded ? `−${money0(end.ded)}` : money0(0)}</b><small>Deducción</small></span>
           <span><b>${money0(end.carga)}</b><small>Carga neta</small></span>
         </div>
       </div>
@@ -358,7 +415,7 @@ function viewDeduccion(l) {
       <div class="q ${sel ? 'open' : ''}">
         <div class="line-sw"><span><b>${esc(r.name)}</b><small>${limit}</small></span>${`<button type="button" class="switch ${sel ? 'on' : ''}" data-rule="${r.id}" role="switch" aria-checked="${!!sel}" aria-label="${esc(r.name)}"><span></span></button>`}</div>
         ${sel ? `<p class="small muted q-txt">${esc(r.req)}</p>
-          ${r.age || r.id === 'custom' ? `<div class="grid2">${`<label class="field"><span>Último año en que la aplicas</span><input type="text" inputmode="numeric" data-rule-until="${r.id}" value="${sel.until || ''}" placeholder="sin fin"></label>`}</div>` : ''}` : ''}
+          ${r.age || r.id === 'custom' ? `<div class="grid2">${`<label class="field"><span>Último año</span><input type="text" inputmode="numeric" data-rule-until="${r.id}" value="${sel.until || ''}" placeholder="sin fin"></label>`}</div>` : ''}` : ''}
       </div>`;
   };
   const customSel = has('custom');
@@ -388,8 +445,8 @@ function viewDeduccion(l) {
               ${field('Porcentaje', 'ded.custom.pct', d.custom.pct, { unit: '%' })}
               ${select('Sobre', 'ded.custom.kind', d.custom.kind, [['all', 'Capital e intereses'], ['capital', 'Solo capital'], ['interest', 'Solo intereses']])}
               ${field('Base máxima al año', 'ded.custom.maxBase', d.custom.maxBase, { unit: '€' })}
-              ${field('Deducción máxima al año', 'ded.custom.maxDed', d.custom.maxDed, { unit: '€' })}
-              <label class="field"><span>Último año en que la aplicas</span><input type="text" inputmode="numeric" data-rule-until="custom" value="${customSel.until || ''}" placeholder="sin fin"></label>
+              ${field('Deducción máx. al año', 'ded.custom.maxDed', d.custom.maxDed, { unit: '€' })}
+              <label class="field"><span>Último año</span><input type="text" inputmode="numeric" data-rule-until="custom" value="${customSel.until || ''}" placeholder="sin fin"></label>
             </div>` : ''}
           </div>
         </div>
@@ -443,9 +500,9 @@ function viewFuturo(l) {
       <p class="label">Otras estimaciones</p>
       <div class="card form">
         <div class="grid2">
-          ${field('Rentabilidad de tu dinero', 'env.returnGross', e.returnGross, { unit: '%', hint: 'Bruta, en un depósito o similar' })}
-          ${field('Impuesto sobre el ahorro', 'env.savingsTax', e.savingsTax, { unit: '%', hint: 'Entre el 19 y el 30 %' })}
-          ${field('Inflación esperada', 'env.inflation', e.inflation, { unit: '%', hint: 'El BCE prevé 2,1 % en 2028' })}
+          ${field('Rentabilidad', 'env.returnGross', e.returnGross, { unit: '%', hint: 'Bruta, en un depósito o similar' })}
+          ${field('Impuesto ahorro', 'env.savingsTax', e.savingsTax, { unit: '%', hint: 'Entre el 19 y el 30 %' })}
+          ${field('Inflación', 'env.inflation', e.inflation, { unit: '%', hint: 'El BCE prevé 2,1 % en 2028' })}
         </div>
         <p class="small muted">La rentabilidad mide lo que ganas por no amortizar y mantener el dinero; la inflación pasa los costes futuros a euros de hoy.</p>
       </div>
@@ -461,7 +518,7 @@ function budgetCard(l) {
         <div class="grid2">
           ${field('Disponible hoy', 'budget.today', b.today, { unit: '€' })}
           ${field('Y cada año podrías', 'budget.yearly', b.yearly, { unit: '€' })}
-          ${select('Mes de cada amortización', 'budget.month', b.month, MONTHS.map((m, i) => [i + 1, m[0].toUpperCase() + m.slice(1)]), true)}
+          ${select('Mes de amortización', 'budget.month', b.month, MONTHS.map((m, i) => [i + 1, m[0].toUpperCase() + m.slice(1)]), true)}
           ${field('Mínimo por operación', 'budget.min', b.min, { unit: '€', hint: 'Si tu banco lo exige' })}
         </div>
         <p class="opt-label">El recomendado busca</p>
@@ -482,7 +539,9 @@ function whyText(l, ctx, rec, base) {
     const filled = rec.years.filter((y) => y.extra > 0 && y.base >= y.cap - 300).length;
     if (filled) out.push(`En ${filled} ${filled === 1 ? 'año llega' : 'años llega'} justo al tope deducible para no perder deducción.`);
   }
-  if (ctx.rules.length) out.push(`Deduces ${money0(rec.ded)} en total, frente a ${money0(base.ded)} si no amortizas.`);
+const lost = base.ded - rec.ded;
+if (ctx.rules.length && lost >= 0.5) out.push(`Renuncias a ${money0(lost)} de deducción a cambio de pagar ${money0(base.interest - rec.interest)} menos de intereses.`);
+else if (ctx.rules.length) out.push('Ahorras intereses sin perder deducción.');
   if (rec.carga < 0) out.push('La carga sale negativa porque lo que deduces supera a los intereses y gastos.');
   return out;
 }
@@ -497,12 +556,12 @@ function scenarioRow(sc, l, base) {
         <span class="row-text"><b>${esc(sc.name)}</b><small>${sc.items.length ? `${money0(sc.r.extra)} · ${modeText(sc.mode)} · fin ${ymShort(tToYm(sc.r.endT))}` : esc(sc.sub)}</small></span>
         <span class="row-amt"><b>${money0(costOf(l, sc.r))}</b><small class="${saved > 0.5 ? 'ok' : ''}">${sc.id === 'base' ? 'referencia' : saved > 0.5 ? `ahorras ${money0(saved)}` : saved < -0.5 ? `pierdes ${money0(-saved)}` : 'sin ahorro'}</small></span>
       </button>
-      ${open ? scenarioBody(sc, l) : ''}
+      ${open ? scenarioBody(sc, l, base) : ''}
     </div>`;
 }
 
-function scenarioBody(sc, l) {
-  const y = yearsTable(sc.r);
+function scenarioBody(sc, l, base) {
+  const y = (sc.items.length ? bridgeHTML(base.r, sc.r) : '') + yearsTable(sc.r);
   if (sc.user) {
     return `<div class="sc-body">
       ${field('Nombre', `sc.${sc.id}.name`, sc.name, { type: 'text' })}
@@ -561,9 +620,10 @@ function viewPlan(l) {
         <p class="hero-sub">de ${l.budget.goal === 'vp' ? 'mejora en valor actual' : 'ahorro en carga financiera'} frente a no amortizar</p>
         <div class="hero-stats">
           <span><b>${money0(rec.r.extra)}</b><small>Amortizas</small></span>
-          <span><b>${money0(rec.r.ded)}</b><small>Deducción</small></span>
-          <span><b>${ymShort(tToYm(rec.r.endT))}</b><small>${rec.items.length ? modeText(rec.mode) : 'Fin'}</small></span>
+          <span><b>${ymShort(tToYm(rec.r.endT))}</b><small>Terminas</small></span>
+          <span><b>${rec.mode === 'term' ? 'Plazo' : 'Cuota'}</b><small>Reduces</small></span>
         </div>
+        ${rec.items.length ? bridgeHTML(base.r, rec.r) : ''}
         <ul class="why">${whyText(l, ctx, rec.r, base.r).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
       </div>`}
     <section class="group">
@@ -584,13 +644,14 @@ function viewComparar(l) {
     pts: [[ctx.t0 - 1, l.balance], ...s.r.rows.map((r) => [r.t, r.balance])],
   }));
   const metrics = [
-    ['Carga financiera', (r) => money0(r.carga)],
-    ['En euros de hoy', (r) => money0(r.real)],
-    ['Coste en valor actual', (r) => money0(r.vp)],
     ['Intereses', (r) => money0(r.interest)],
-    ['Deducción', (r) => money0(r.ded)],
     ['Comisiones', (r) => money0(r.fees)],
     ['Seguros', (r) => money0(r.ins)],
+    ['Deducción', (r) => (r.ded ? `−${money0(r.ded)}` : money0(0))],
+    ['Carga financiera', (r) => money0(r.carga), 'tr-total'],
+    ['Frente a no amortizar', (r) => (r === base.r ? '–' : signed(base.r.carga - r.carga)), 'tr-sub'],
+    ['En euros de hoy', (r) => money0(r.real)],
+    ['Coste en valor actual', (r) => money0(r.vp)],
     ['Amortizado', (r) => money0(r.extra)],
     ['Termina en', (r) => ymShort(tToYm(r.endT))],
     ['Plazo', (r) => termText(r.months)],
@@ -610,6 +671,7 @@ function viewComparar(l) {
   const net = l.env.returnGross * (1 - l.env.savingsTax / 100);
   const rateNow = base.r.rows[0]?.rate ?? l.tin;
   return `
+    ${balanceBars(list, base)}
     <div class="card chart-card" data-chart="bal">
       <p class="label">Capital pendiente</p>
       ${lineChart(series, { y: money0, yAxis: (v) => `${num(v / 1000, 0)} k`, label: 'Capital pendiente por escenario', zero: true, end: list.map((s) => ymShort(tToYm(s.r.endT))) })}
@@ -618,7 +680,7 @@ function viewComparar(l) {
       <p class="label">Comparativa</p>
       <div class="card y-scroll"><table class="y-table cmp">
         <thead><tr><th></th>${list.map((s) => `<th>${esc(s.name)}</th>`).join('')}</tr></thead>
-        <tbody>${metrics.map(([n, f]) => `<tr><td>${n}</td>${list.map((s) => `<td>${f(s.r)}</td>`).join('')}</tr>`).join('')}</tbody>
+        <tbody>${metrics.map(([n, f, c]) => `<tr class="${c || ''}"><td>${n}</td>${list.map((s) => `<td>${f(s.r)}</td>`).join('')}</tr>`).join('')}</tbody>
       </table></div>
     </section>
     ${stress}
