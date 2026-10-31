@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.1.x; novedades: 0.x.0.
-const APP_VERSION = '0.1.3';
+const APP_VERSION = '0.2.0';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca datos de la app.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -64,7 +64,8 @@ const num = (n, d = 2) => (n || 0).toLocaleString(LOCALE, { minimumFractionDigit
 const money = (n) => `${num(n)} €`;
 const money0 = (n) => `${num(n, 0).replace("-", "−")} €`;
 const pct = (p, d = 2) => `${num(p, d)} %`;
-const formatInput = (n) => (n || n === 0 ? String(n).replace('.', ',') : '');
+// Valor de un campo: con punto de miles y los decimales que tenga
+const formatInput = (n) => (n || n === 0 ? n.toLocaleString(LOCALE, { maximumFractionDigits: 4, useGrouping: 'always' }) : '');
 const ymShort = (ym) => `${MONTHS_SHORT[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
 const ymLong = (ym) => `${MONTHS[Number(ym.slice(5)) - 1]} de ${ym.slice(0, 4)}`;
 const termText = (months) => {
@@ -114,6 +115,7 @@ function normLoan(l) {
     scenarios: [], rec: null,
   };
   const ded = { on: false, region: 'madrid', rules: [], holders: 1, deductiblePct: 100, lifetimeUsed: 0, custom: { pct: 0, kind: 'all', maxBase: 0, maxDed: 0 } };
+  const excess = { on: false, initial: 0, freePct: 20, scope: 'year', feePct: 0, done: 0 };
   const budget = { today: 0, yearly: 0, month: 1, min: 0, goal: 'carga' };
   const env = {
     curve: 'analistas', returnGross: 2.5, savingsTax: 19, inflation: 2.3,
@@ -122,6 +124,7 @@ function normLoan(l) {
   return {
     ...def, ...l,
     ded: { ...ded, ...(l.ded || {}), custom: { ...ded.custom, ...(l.ded?.custom || {}) } },
+    excess: { ...excess, ...(l.excess || {}) },
     budget: { ...budget, ...(l.budget || {}) },
     env: { ...env, ...(l.env || {}) },
   };
@@ -366,7 +369,7 @@ function viewDatos(l) {
           ${l.rateType === 'fixed' ? '' : `
             ${field('Diferencial', 'spread', l.spread, { unit: '%' })}
             ${field(l.rateType === 'mixed' ? 'Empieza el variable' : 'Próxima revisión', 'nextReview', l.nextReview, { type: 'month' })}
-            ${select('Revisión', 'review', l.review, [[12, 'Anual'], [6, 'Semestral']], true)}`}
+            ${select('Revisión', 'review', l.review, [[12, 'Una vez al año'], [6, 'Dos veces al año']], true)}`}
         </div>
         ${l.rateType !== 'fixed' ? '<p class="small muted">Cada revisión usa el Euribor publicado dos meses antes, como es habitual en las hipotecas.</p>' : ''}
       </div>
@@ -382,6 +385,18 @@ function viewDatos(l) {
         </div>
         <p class="small muted">Mira tu escritura. Máximos de la Ley 5/2019 (firmas desde el 16-6-2019) y solo si el banco tiene pérdida: <b>fijo</b>, 2 % los 10 primeros años y 1,5 % después; <b>variable</b>, 0,25 % los 3 primeros años o 0,15 % los 5 primeros, y 0 después.</p>
         <div class="line-sw"><span>Los seguros figuran en las condiciones del préstamo<small>Solo así entran en la base deducible</small></span>${swtch('insuranceDed', l.insuranceDed, 'Seguros en la base deducible')}</div>
+        <div class="line-sw"><span>Comisión por superar un % del capital inicial<small>Se suma a la comisión anterior, solo sobre lo que exceda</small></span>${swtch('excess.on', l.excess.on, 'Comisión por superar un porcentaje')}</div>
+        ${l.excess.on ? `
+          <div class="grid2">
+            ${field('Capital inicial', 'excess.initial', l.excess.initial, { unit: '€' })}
+            ${field('Sin comisión hasta', 'excess.freePct', l.excess.freePct, { unit: '%' })}
+            ${field('Comisión del exceso', 'excess.feePct', l.excess.feePct, { unit: '%' })}
+            ${l.excess.scope === 'total' ? field('Ya amortizado', 'excess.done', l.excess.done, { unit: '€' }) : ''}
+          </div>
+          ${seg('excess.scope', l.excess.scope, [['year', 'Límite por año'], ['total', 'Límite en toda la vida']], 'Cómo se cuenta el límite')}
+          <p class="small muted">${l.excess.initial > 0
+            ? `Puedes amortizar ${money0((l.excess.initial * l.excess.freePct) / 100)} ${l.excess.scope === 'year' ? 'cada año' : 'en total'} sin esta comisión. Comprueba en tu escritura cómo se cuenta.`
+            : 'Indica el capital inicial del préstamo para aplicarla.'}</p>` : ''}
       </div>
     </section>
     ${ctx ? `
@@ -923,6 +938,7 @@ function openNewScenario(l) {
       <div class="seg" id="ns-mode"><button type="button" data-m="term" class="on">Reducir plazo</button><button type="button" data-m="payment">Reducir cuota</button></div>
       <div class="sheet-actions"><button type="button" class="ghost-btn" data-close>Cancelar</button></div>
     </div>`;
+  $('ns-amt').addEventListener('change', (e) => { e.target.value = formatInput(parseAmount(e.target.value) || ''); });
   let mode = 'term';
   back.querySelectorAll('[data-m]').forEach((b) => b.addEventListener('click', () => {
     mode = b.dataset.m;

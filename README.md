@@ -1,6 +1,6 @@
 # SimulaCTRL
 
-Versión 0.1.3 · by OmT Finance
+Versión 0.2.0 · by OmT Finance
 
 App web (PWA) que simula la amortización anticipada de préstamos e hipotecas, basada en el simulador de
 UnderCTRL. Mismo estilo que las demás apps de OmT Finance, en turquesa y arena. Los datos se guardan solo en
@@ -8,7 +8,7 @@ el dispositivo (`localStorage`, clave `simular:data`); lo único que se consulta
 
 ## Qué hace
 
-- **Préstamo:** capital pendiente, plazo, interés fijo, variable o mixto, comisión por amortizar y seguros.
+- **Préstamo:** capital pendiente, plazo, interés fijo, variable o mixto, comisión por amortizar, comisión por superar un % del capital inicial y seguros.
 - **Deducción:** vivienda habitual por comunidad y territorio foral. Solo entran las que dependen de lo que
   se paga cada año, porque son las que cambian el plan. Hay además una deducción personalizada.
 - **Previsiones:** Euribor de analistas, de mercado (curva del BCE en directo), sin cambios, ±1 punto o propio;

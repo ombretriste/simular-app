@@ -179,6 +179,8 @@ function prepare(loan, market, curveKind) {
     holders: Math.max(1, loan.ded?.holders || 1),
     used: loan.ded?.lifetimeUsed || 0,
     insDed: !!loan.insuranceDed,
+    // Comisión por superar un % del capital inicial, solo sobre lo que exceda
+    free: loan.excess?.on && loan.excess.initial > 0 ? (loan.excess.initial * loan.excess.freePct) / 100 : Infinity,
   };
 }
 
@@ -255,6 +257,9 @@ function simulate(ctx, plan, detail = false) {
   let t = t0;
   let ip = 0;
   let cancelled = false;
+  const perYear = L.excess?.scope === 'year';
+  let freeUsed = perYear ? 0 : L.excess?.done || 0;
+  let freeYear = Math.floor(t0 / 12);
   const rows = detail ? [] : null;
   const applied = detail ? [] : null;
 
@@ -270,7 +275,13 @@ function simulate(ctx, plan, detail = false) {
       const a = Math.min(items[ip++].amount, bal);
       if (a <= 0) continue;
       const pct = feeT && t >= feeT ? L.feeAfterPct : L.feePct;
-      const f = (a * (pct || 0)) / 100;
+      let f = (a * (pct || 0)) / 100;
+      if (ctx.free < Infinity) {
+        if (perYear && Math.floor(t / 12) !== freeYear) { freeYear = Math.floor(t / 12); freeUsed = 0; }
+        const over = Math.max(0, freeUsed + a - Math.max(ctx.free, freeUsed));
+        freeUsed += a;
+        f += (over * (L.excess.feePct || 0)) / 100;
+      }
       bal -= a; ex += a; fee += f;
       if (detail) applied.push({ t, amount: a, fee: f });
       if (bal <= 0.005) { bal = 0; cancelled = true; break; }
