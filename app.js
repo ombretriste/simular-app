@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.1.x; novedades: 0.x.0.
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca datos de la app.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -576,7 +576,7 @@ function scenarioRow(sc, l, base) {
 }
 
 function scenarioBody(sc, l, base) {
-  const y = (sc.items.length ? bridgeHTML(base.r, sc.r) : '') + yearsTable(sc.r);
+  const y = (sc.items.length ? bridgeHTML(base.r, sc.r) : '') + yearsTable(sc) + monthlyTable(sc);
   if (sc.user) {
     return `<div class="sc-body">
       ${field('Nombre', `sc.${sc.id}.name`, sc.name, { type: 'text' })}
@@ -603,8 +603,13 @@ function scenarioBody(sc, l, base) {
   </div>`;
 }
 
-function yearsTable(r) {
-  return `<details class="years-d"><summary>Año a año ${icon('chevron', 14)}</summary>
+// Desplegables abiertos: siguen abiertos aunque la pantalla se redibuje al editar
+const openTables = new Set();
+const detailsAttrs = (key) => `class="years-d" data-keep="${key}" ${openTables.has(key) ? 'open' : ''}`;
+
+function yearsTable(sc) {
+  const r = sc.r;
+  return `<details ${detailsAttrs(`${sc.id}:years`)}><summary>Año a año ${icon('chevron', 14)}</summary>
     <div class="y-scroll"><table class="y-table">
       <thead><tr><th>Año</th><th>Cuotas</th><th>Extra</th><th>Intereses</th><th>Deducción</th><th>Tope libre</th></tr></thead>
       <tbody>${r.years.map((y) => {
@@ -613,6 +618,21 @@ function yearsTable(r) {
       }).join('')}</tbody>
     </table></div>
     <p class="note">El año en curso incluye en el tope las cuotas ya pagadas. «Tope libre» es lo que aún podrías pagar ese año con deducción.</p>
+  </details>`;
+}
+
+// Cuadro de amortización completo, mes a mes. La línea marcada lleva una amortización anticipada.
+function monthlyTable(sc) {
+  const key = `${sc.id}:months`;
+  const r = sc.r;
+  const paid = r.rows.reduce((a, x) => a + x.capital, 0);
+  return `<details ${detailsAttrs(key)}><summary>Cuadro de amortización ${icon('chevron', 14)}</summary>
+    ${openTables.has(key) ? `<div class="y-scroll m-scroll"><table class="y-table m-table">
+      <thead><tr><th>Mes</th><th>Tipo</th><th>Cuota</th><th>Intereses</th><th>Capital</th><th>Extra</th><th>Pendiente</th></tr></thead>
+      <tbody>${r.rows.map((x) => `<tr class="${x.extra ? 'tr-extra' : ''}"><td>${ymShort(tToYm(x.t))}</td><td>${num(x.rate)} %</td><td>${num(x.payment)}</td><td>${num(x.interest)}</td><td>${num(x.capital)}</td><td>${x.extra ? num(x.extra) : '–'}</td><td>${num(x.balance)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td>Total</td><td></td><td>${num(paid + r.interest)}</td><td>${num(r.interest)}</td><td>${num(paid)}</td><td>${r.extra ? num(r.extra) : '–'}</td><td></td></tr></tfoot>
+    </table></div>
+    <p class="note">Importes en euros. La cuota no incluye seguros${r.fees >= 0.5 ? ` y las comisiones (${money(r.fees)}) van aparte` : ''}. Las líneas marcadas llevan una amortización anticipada.</p>` : ''}
   </details>`;
 }
 
@@ -870,6 +890,12 @@ function bindView(view) {
     openSc = openSc === b.dataset.open ? null : b.dataset.open; render();
   }));
   view.querySelector('[data-sc-new]')?.addEventListener('click', () => openNewScenario(l));
+  view.querySelectorAll('[data-keep]').forEach((d) => d.addEventListener('toggle', () => {
+    const k = d.dataset.keep;
+    if (d.open === openTables.has(k)) return;
+    if (d.open) openTables.add(k); else openTables.delete(k);
+    if (k.endsWith(':months')) render(); // el cuadro completo se dibuja solo cuando se abre
+  }));
   view.querySelectorAll('[data-sc-copy]').forEach((b) => b.addEventListener('click', () => {
     const ctx = prepare(l, market);
     const src = scenariosOf(l, ctx).find((s) => s.id === b.dataset.scCopy);
