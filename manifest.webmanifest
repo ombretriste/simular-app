@@ -1,0 +1,17 @@
+{
+  "name": "SimulaCTRL",
+  "short_name": "SimulaCTRL",
+  "description": "Simula la amortización anticipada de tu préstamo o hipoteca: plan recomendado, deducción por vivienda y previsiones del Euribor.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#081413",
+  "theme_color": "#081413",
+  "lang": "es",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "orientation": "portrait"
+}
