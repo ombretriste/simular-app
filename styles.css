@@ -908,3 +908,20 @@ input[type="month"]::-webkit-calendar-picker-indicator { position: absolute; ins
 .m-table tfoot td { position: sticky; bottom: 0; background: var(--surface-solid); font-weight: 600; border-top: 1px solid var(--muted); }
 .m-table tfoot td:first-child { z-index: 3; }
 .m-table tr.tr-extra td { background: color-mix(in srgb, var(--accent) 16%, var(--surface-solid)); font-weight: 500; }
+
+/* Datos de UnderCTRL en el plan */
+.uc-block { display: grid; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.uc-block > p { margin: 0; }
+.uc-sec { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; font-size: 14px; }
+.uc-sec .br-row b { font-weight: 500; font-variant-numeric: tabular-nums; }
+.br-row.sub { font-size: 13px; color: var(--muted); padding-left: 10px; font-variant-numeric: tabular-nums; }
+.line-sw.sub { padding-left: 10px; font-size: 14px; }
+.line-sw.sub > span:first-child { font-size: 14px; }
+.uc-sec .grid2 { margin-top: 6px; align-items: end; }
+.uc-use { display: grid; gap: 4px; justify-items: center; text-align: center; }
+.uc-use small { font-size: 12px; color: var(--muted); }
+.uc-sec .small-btn { justify-self: center; }
+.link-inline { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
+.uc-err { color: var(--neg); min-height: 1em; }
+.uc-row { grid-template-columns: minmax(0, 1fr) auto; }
+.empty .small-btn { margin-top: 2px; }

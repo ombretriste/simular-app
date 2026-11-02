@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.1.x; novedades: 0.x.0.
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca datos de la app.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -27,6 +27,7 @@ const ICONS = {
   info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r=".6" fill="currentColor"/>',
   chevron: '<path d="M9 5l7 7-7 7"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
 };
 const icon = (name, size = 22) =>
   `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -112,7 +113,7 @@ function normLoan(l) {
     rateType: 'fixed', spread: 0, nextReview: nextYm(), review: 12, lag: 2,
     insurance: 0, insuranceDed: true,
     feePct: 0, feeAfterPct: 0, feeUntil: '',
-    scenarios: [], rec: null,
+    scenarios: [], rec: null, ucLoan: '',
   };
   const ded = { on: false, region: 'madrid', rules: [], holders: 1, deductiblePct: 100, lifetimeUsed: 0, custom: { pct: 0, kind: 'all', maxBase: 0, maxDed: 0 } };
   const excess = { on: false, initial: 0, freePct: 20, scope: 'year', feePct: 0, done: 0 };
@@ -125,6 +126,8 @@ function normLoan(l) {
     ...def, ...l,
     ded: { ...ded, ...(l.ded || {}), custom: { ...ded.custom, ...(l.ded?.custom || {}) } },
     excess: { ...excess, ...(l.excess || {}) },
+    // Conexión con UnderCTRL: perfil elegido, proyecciones que no cuentan, colchón y % del ahorro
+    uc: { scope: '', off: [], cushion: 0, share: 100, ...(l.uc || {}) },
     budget: { ...budget, ...(l.budget || {}) },
     env: { ...env, ...(l.env || {}) },
   };
@@ -215,7 +218,7 @@ const USER_SERIES = [['--s-u1', '1 0'], ['--s-u2', '9 3 2 3'], ['--s-u3', '4 3']
 
 // Huella de lo que influye en el plan: si cambia, hay que recalcular el recomendado
 function recKey(l) {
-  const { scenarios, rec, name, id, ...rest } = l;
+  const { scenarios, rec, name, id, uc, ucLoan, ...rest } = l;
   return JSON.stringify([rest, market?.last, market?.value, market?.curveDate]);
 }
 let opt = { running: false, progress: 0, signal: null };
@@ -348,6 +351,7 @@ function viewDatos(l) {
   const pay = ctx ? pmt(l.balance, l.tin / 1200, ctx.n) : 0;
   const end = ctx ? simulate(ctx, { items: [], mode: 'term' }) : null;
   return `
+    ${ucLoansCard(l)}
     <section class="group">
       <p class="label">Tu préstamo</p>
       <div class="card form">
@@ -539,6 +543,7 @@ function budgetCard(l) {
         <p class="opt-label">El recomendado busca</p>
         ${seg('budget.goal', b.goal, [['carga', 'Menos carga financiera'], ['vp', 'Mejor con tu dinero rindiendo']], 'Objetivo')}
         <p class="small muted">${b.goal === 'carga' ? 'Intereses, comisiones y seguros, menos deducciones.' : `Tiene en cuenta que el dinero que no amortizas te renta un ${pct(l.env.returnGross * (1 - l.env.savingsTax / 100))} neto.`}</p>
+        ${ucBudgetBlock(l)}
       </div>
     </section>`;
 }
@@ -806,7 +811,7 @@ function render() {
   if (!l) {
     view.innerHTML = `
       <div class="intro"><p class="intro-text">Simula cómo amortizar tu préstamo o hipoteca: cuánto, cuándo y si reducir cuota o plazo, con tu deducción por vivienda y las previsiones del Euribor.</p></div>
-      <div class="card empty">${icon('stairs', 30)}<b>Añade tu préstamo</b><small>Solo necesitas el capital pendiente, el plazo y el interés. Todo se queda en tu dispositivo.</small><button type="button" class="done-btn" data-new-loan>Añadir préstamo</button></div>`;
+      <div class="card empty">${icon('stairs', 30)}<b>Añade tu préstamo</b><small>Solo necesitas el capital pendiente, el plazo y el interés. Todo se queda en tu dispositivo.</small><button type="button" class="done-btn" data-new-loan>Añadir préstamo</button>${ucData?.loans.length ? ucData.loans.map((x) => `<button type="button" class="ghost-btn small-btn" data-uc-new="${esc(x.key)}">${icon('link', 16)} ${esc(x.name)} de UnderCTRL</button>`).join('') : `<button type="button" class="ghost-btn small-btn" data-uc-open>${icon('link', 16)} Conectar con UnderCTRL</button>`}</div>`;
     bindView(view);
     return;
   }
@@ -865,6 +870,16 @@ function bindView(view) {
   view.querySelectorAll('[data-loan]').forEach((b) => b.addEventListener('click', () => {
     data.cur = b.dataset.loan; openSc = null; persist(); render();
   }));
+  view.querySelectorAll('[data-uc-new]').forEach((b) => b.addEventListener('click', () => {
+    const x = ucData.loans.find((y) => y.key === b.dataset.ucNew);
+    const nl = newLoan(x.name);
+    Object.assign(nl, ucLoanFields(x));
+    data.loans.push(nl);
+    data.cur = nl.id;
+    tab = 'datos';
+    persist(); render();
+  }));
+  bindUC(view, l);
   if (!l) return;
   view.querySelectorAll('[data-f]').forEach((el) => el.addEventListener('change', () => {
     const t = el.dataset.t;
@@ -1008,10 +1023,376 @@ function confirmDeleteLoan(l) {
   });
 }
 
+// ---------- Conexión con UnderCTRL ----------
+// SimulaCTRL lee de la nube de UnderCTRL los préstamos, las proyecciones de ahorro, lo que es líquido
+// y la rentabilidad de las inversiones. Con el usuario y la contraseña de UnderCTRL se derivan aquí sus
+// claves, igual que hace UnderCTRL; la contraseña no se guarda y de los datos solo se guarda un
+// resumen. Solo lectura: SimulaCTRL nunca escribe en UnderCTRL.
+const UC_API = 'https://finanzas-app-gules-three.vercel.app/api/sync';
+const UC_LINK_KEY = 'simular:ucLink';
+const UC_DATA_KEY = 'simular:ucData';
+const UC_ITERATIONS = 310000;
+let ucLink = load(UC_LINK_KEY, null); // { username, user, auth, key }
+let ucData = load(UC_DATA_KEY, null); // resumen: ver ucExtract
+let ucError = '';
+let ucBusy = false;
+
+const utf8 = new TextEncoder();
+const hexOf = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+const toB64 = (buf) => {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+const fromB64 = (str) => Uint8Array.from(atob(str), (ch) => ch.charCodeAt(0));
+
+async function ucDerive(username, password) {
+  const u = username.trim().toLowerCase();
+  const base = await crypto.subtle.importKey('raw', utf8.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = (salt) => crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: utf8.encode(salt), iterations: UC_ITERATIONS }, base, 256);
+  const [auth, key] = await Promise.all([bits(`finanzas-auth:${u}`), bits(`finanzas-enc:${u}`)]);
+  return { username: u, user: hexOf(await crypto.subtle.digest('SHA-256', utf8.encode(`finanzas-user:${u}`))), auth: hexOf(auth), key: toB64(key) };
+}
+async function ucDecrypt(keyB64, blob) {
+  const k = await crypto.subtle.importKey('raw', fromB64(keyB64), 'AES-GCM', false, ['decrypt']);
+  const [iv, ct] = blob.split('.');
+  return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(iv) }, k, fromB64(ct))));
+}
+const UC_ERRORS = {
+  auth: 'Usuario o contraseña de UnderCTRL incorrectos.',
+  'too-many': 'Demasiados intentos. Espera 15 minutos.',
+  'not-configured': 'La nube de UnderCTRL no está activada.',
+  empty: 'Tu cuenta de UnderCTRL aún no tiene datos en la nube.',
+  key: 'No se han podido descifrar los datos: revisa la contraseña.',
+  network: 'No se puede conectar con UnderCTRL. Comprueba la conexión.',
+};
+async function ucPull(link) {
+  let res;
+  try {
+    res = await fetch(UC_API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'pull', user: link.user, auth: link.auth }) });
+  } catch (_) { throw new Error('network'); }
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || 'network');
+  if (!out.blob) throw new Error('empty');
+  try { return await ucDecrypt(link.key, out.blob); } catch (_) { throw new Error('key'); }
+}
+
+// Descarga y resume los datos; con interactive avisa del resultado
+async function refreshUC({ interactive = false, link = ucLink } = {}) {
+  if (!link || ucBusy) return false;
+  ucBusy = true;
+  try {
+    ucData = ucExtract(await ucPull(link));
+    ucError = '';
+    save(UC_DATA_KEY, ucData);
+    if (interactive) toast('Datos de UnderCTRL actualizados');
+    return true;
+  } catch (err) {
+    ucError = UC_ERRORS[err.message] || UC_ERRORS.network;
+    if (interactive) toast(ucError, { warn: true });
+    return false;
+  } finally {
+    ucBusy = false;
+    render();
+  }
+}
+
+// --- Resumen de los datos de UnderCTRL (solo lo que usa SimulaCTRL) ---
+const ucDay = (iso) => Math.round(new Date(`${iso}T12:00:00`).getTime() / 864e5);
+function ucExtract(d) {
+  const today = new Date();
+  const todayIso = today.toISOString().slice(0, 10);
+  const profiles = (d.profiles || []).map((p) => ({ id: p.id, name: p.name || 'Persona', common: !!p.common }));
+  const groups = (Array.isArray(d.groups) && d.groups.length ? d.groups : [{ id: 'total', name: 'Total', members: null }])
+    .map((g) => ({ id: g.id, name: g.name || 'Total', members: Array.isArray(g.members) ? g.members : null }));
+  const loans = [];
+  const proj = [];
+  const assets = {};
+  const flows = {};
+  for (const p of d.profiles || []) {
+    const cats = p.cats || {};
+    // Préstamos: los compartidos (mismo grupo) son uno solo con varias personas
+    for (const i of cats.loans || []) {
+      const key = i.shared?.group || i.id;
+      let x = loans.find((l) => l.key === key);
+      if (!x) {
+        x = { key, name: i.name || 'Préstamo', owners: [], pct: {}, total: i.shared ? Number(i.shared.total) || 0 : Number(i.amount) || 0, loan: i.loan || null };
+        loans.push(x);
+      }
+      x.owners.push(p.id);
+      x.pct[p.id] = i.shared ? Number(i.shared.pct) || 0 : 100;
+      if (!x.loan && i.loan) x.loan = i.loan;
+    }
+    // Proyecciones: ahorro esperado de los próximos 24 meses (null fuera de la proyección)
+    for (const pr of cats.projections || []) {
+      const cur = (today.getFullYear() - pr.startYear) * 12 + today.getMonth();
+      const sumRows = (rows, m) => (rows || []).reduce((a, r) => a + (Number(r.v?.[m]) || 0), 0);
+      const months = Array.from({ length: 24 }, (_, k) => {
+        const m = cur + k;
+        if (m < (pr.firstMonth || 0) || m >= pr.years * 12) return null;
+        if (pr.plan?.[m] != null) return Number(pr.plan[m]);
+        const dim = new Date(pr.startYear + Math.floor(m / 12), (m % 12) + 1, 0).getDate();
+        return sumRows(pr.income, m) - sumRows(pr.expense, m) - (Number(pr.dailyTarget) || 0) * dim;
+      });
+      proj.push({ id: pr.id, owner: p.id, name: pr.name || 'Proyección', months });
+    }
+    // Patrimonio por clase: líquido y no líquido (como «Activos líquidos» de UnderCTRL)
+    const s = (list) => (list || []).reduce((a, i) => a + (Number(i.amount) || 0), 0);
+    const live = (cats.stocks || []).filter((i) => !(i.sellDate || i.sellPrice));
+    assets[p.id] = {
+      banks: s(cats.banks), deposits: s(cats.deposits), funds: s(cats.funds), crypto: s(cats.crypto),
+      stocks: s(live.filter((i) => i.available !== false)), stocksLocked: s(live.filter((i) => i.available === false)),
+      options: s(cats.options), pensions: s(cats.pensions), housing: s(cats.housing), cards: s(cats.cards),
+    };
+    // Flujos con fecha para la rentabilidad anualizada: [día, importe] (compras negativas)
+    const f = (flows[p.id] = {});
+    for (const k of ['deposits', 'funds', 'crypto', 'pensions']) {
+      for (const i of cats[k] || []) {
+        const movs = i.movements || [];
+        if (!movs.length || movs.some((m) => !m.date)) continue;
+        const list = movs.map((m) => [ucDay(m.date), (m.type === 'in' ? -1 : 1) * ((Number(m.amount) || 0) + (Number(m.company) || 0))]);
+        if (i.amount > 0) list.push([ucDay(i.valuedAt || todayIso), Number(i.amount)]);
+        (f[k] ||= []).push(...list);
+      }
+    }
+    for (const i of live) {
+      const fx = i.currency === 'EUR' || !i.currency ? 1 : Number(i.buyFx) || 0;
+      if (!i.qty || !i.buyPrice || !i.buyDate || !fx || !(i.amount > 0)) continue;
+      (f.stocks ||= []).push([ucDay(i.buyDate), -i.qty * i.buyPrice * fx], [ucDay(todayIso), Number(i.amount)]);
+    }
+  }
+  return { at: Date.now(), profiles, groups, loans, proj, assets, flows };
+}
+
+// --- Ámbito: una persona, el perfil común o un total ---
+function ucScopeIds(scope) {
+  if (!ucData) return [];
+  const g = ucData.groups.find((x) => x.id === scope);
+  if (g) return g.members ? ucData.profiles.filter((p) => g.members.includes(p.id)).map((p) => p.id) : ucData.profiles.map((p) => p.id);
+  return ucData.profiles.some((p) => p.id === scope) ? [scope] : ucData.profiles.map((p) => p.id);
+}
+const ucScopeName = (scope) => ucData?.groups.find((g) => g.id === scope)?.name ?? ucData?.profiles.find((p) => p.id === scope)?.name ?? 'Total';
+const ucDefaultScope = () => ucData?.groups[0]?.id ?? ucData?.profiles[0]?.id ?? '';
+
+// TIR anual de unos flujos [día, importe]; null si no hay un año de historia o no converge
+function ucXirr(fl) {
+  if (!fl?.length || !fl.some((x) => x[1] < 0) || !fl.some((x) => x[1] > 0)) return null;
+  const d0 = Math.min(...fl.map((x) => x[0]));
+  if (Math.max(...fl.map((x) => x[0])) - d0 < 365) return null;
+  const npv = (r) => fl.reduce((a, [d, v]) => a + v / (1 + r) ** ((d - d0) / 365), 0);
+  let lo = -0.9, hi = 3;
+  if (npv(lo) * npv(hi) > 0) return null;
+  for (let i = 0; i < 120; i++) {
+    const mid = (lo + hi) / 2;
+    if (npv(lo) * npv(mid) <= 0) hi = mid; else lo = mid;
+  }
+  const r = ((lo + hi) / 2) * 100;
+  return Math.abs(r) < 0.05 ? 0 : r;
+}
+
+// Rentabilidad esperada a largo plazo de cada clase líquida (estimación propia, prudente y en bruto).
+// Se combina a partes iguales con la rentabilidad histórica de tus inversiones, si la hay.
+const UC_CLASSES = {
+  banks: { name: 'Cuentas', market: 0.5 },
+  deposits: { name: 'Depósitos', market: 2.3 },
+  funds: { name: 'Fondos', market: 5 },
+  stocks: { name: 'Acciones disponibles', market: 6.5 },
+  crypto: { name: 'Crypto', market: null },
+};
+const UC_ILLIQUID = { pensions: 'Planes de pensiones', stocksLocked: 'Acciones bloqueadas', options: 'Opciones', housing: 'Vivienda' };
+
+function ucSummary(l) {
+  const scope = l.uc.scope || ucDefaultScope();
+  const ids = ucScopeIds(scope);
+  const sumOf = (k) => ids.reduce((a, id) => a + (ucData.assets[id]?.[k] || 0), 0);
+  const classes = Object.entries(UC_CLASSES).map(([k, c]) => {
+    const value = sumOf(k);
+    const hist = ucXirr(ids.flatMap((id) => ucData.flows[id]?.[k] || []));
+    const exp = hist != null && c.market != null ? (hist + c.market) / 2 : c.market ?? hist ?? 0;
+    return { k, name: c.name, value, hist, market: c.market, exp };
+  });
+  const liquid = classes.reduce((a, c) => a + c.value, 0);
+  const illiquid = Object.entries(UC_ILLIQUID).map(([k, name]) => ({ k, name, value: sumOf(k) })).filter((x) => x.value > 0.5);
+  const expReturn = liquid > 0 ? classes.reduce((a, c) => a + c.exp * c.value, 0) / liquid : null;
+  const projections = ucData.proj.filter((p) => ids.includes(p.owner)).map((p) => {
+    const next = p.months.slice(0, 12).filter((v) => v != null);
+    return { ...p, ownerName: ucData.profiles.find((x) => x.id === p.owner)?.name || '', year: next.reduce((a, v) => a + v, 0), count: next.length, on: !l.uc.off.includes(p.id) };
+  });
+  const saving = projections.filter((p) => p.on).reduce((a, p) => a + p.year, 0);
+  return { scope, ids, classes, liquid, illiquid, expReturn, projections, saving, cards: sumOf('cards') };
+}
+
+// Datos de un préstamo de UnderCTRL en el formato de SimulaCTRL (plazo y tipo calculados a hoy)
+function ucLoanFields(x) {
+  const out = { name: x.name, balance: Math.round(x.total * 100) / 100, ucLoan: x.key };
+  const L = x.loan;
+  if (!(L && Number(L.principal) > 0 && L.start && Number(L.years) > 0)) return out;
+  const addM = (iso, n) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    const first = new Date(Date.UTC(y, m - 1 + n, 1));
+    const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+    return `${first.getUTCFullYear()}-${String(first.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(d, last)).padStart(2, '0')}`;
+  };
+  const n = Math.round(Number(L.years) * 12);
+  const today = new Date().toISOString().slice(0, 10);
+  let paid = 0;
+  while (paid < n && addM(L.start, paid + 1) <= today) paid++;
+  const rem = n - paid;
+  Object.assign(out, { years: Math.floor(rem / 12), months: rem % 12, nextPay: addM(L.start, paid + 1).slice(0, 7), spread: Number(L.spread) || 0, review: L.review === 6 ? 6 : 12, lag: L.lag === 1 ? 1 : 2 });
+  if (L.rateType !== 'variable') return Object.assign(out, { rateType: 'fixed', tin: Number(L.rate) || 0 });
+  const initM = L.initialRate != null && L.initialRate !== '' ? Math.min(Number(L.initialMonths) || 12, n) : 0;
+  if (paid < initM) return Object.assign(out, { rateType: 'mixed', tin: Number(L.initialRate) || 0, nextReview: addM(L.start, initM + 1).slice(0, 7) });
+  const review = out.review;
+  const lastRev = initM + Math.floor((paid - initM) / review) * review;
+  const curve = buildCurve('plano', market);
+  const revYm = addM(L.start, lastRev).slice(0, 7);
+  const tin = Math.max(0, curve(ymToT(revYm) - out.lag) + out.spread);
+  return Object.assign(out, { rateType: 'variable', tin: Math.round(tin * 1000) / 1000, nextReview: addM(L.start, lastRev + review + 1).slice(0, 7) });
+}
+
+// --- Pantallas ---
+
+function ucLoansCard(l) {
+  if (!ucData?.loans.length) return '';
+  const who = (x) => x.owners.map((id) => ucData.profiles.find((p) => p.id === id)?.name).filter(Boolean).join(' y ');
+  return `
+    <section class="group">
+      <p class="label">Préstamos en UnderCTRL</p>
+      <div class="list">${ucData.loans.map((x) => `
+        <div class="row uc-row ${l.ucLoan === x.key ? 'hit' : ''}">
+          <span class="row-text"><b>${esc(x.name)}</b><small>${esc(who(x))} · ${money0(x.total)} pendientes${x.loan?.principal ? '' : ' · sin cuadro'}</small></span>
+          <button type="button" class="ghost-btn small-btn" data-uc-loan="${esc(x.key)}">${l.ucLoan === x.key ? 'Recargar' : 'Usar'}</button>
+        </div>`).join('')}</div>
+      <p class="note">Carga el capital, el plazo que queda y el tipo de hoy en este préstamo. Los préstamos compartidos se cargan enteros.</p>
+    </section>`;
+}
+
+function ucBudgetBlock(l) {
+  if (!ucLink) return `<p class="small muted">¿Usas UnderCTRL? <button type="button" class="link-inline" data-uc-open>Conéctalo</button> para traer tu ahorro, tu dinero líquido y lo que rinde.</p>`;
+  if (!ucData) return `<p class="small muted">${esc(ucError || 'Cargando datos de UnderCTRL…')}</p>`;
+  const s = ucSummary(l);
+  const opts = [...ucData.groups.map((g) => [g.id, g.name]), ...ucData.profiles.map((p) => [p.id, p.common ? `${p.name} (común)` : p.name])];
+  const cushion = Math.max(0, s.liquid - (l.uc.cushion || 0));
+  const yearly = (s.saving * (l.uc.share ?? 100)) / 100;
+  return `
+    <div class="uc-block">
+      <p class="opt-label">Desde UnderCTRL</p>
+      ${select('Perfil', 'uc.scope', s.scope, opts)}
+      <div class="uc-sec">
+        <div class="br-row"><span>Dinero líquido</span><b>${money0(s.liquid)}</b></div>
+        ${s.classes.filter((c) => c.value > 0.5).map((c) => `<div class="br-row sub"><span>${c.name}</span><span>${money0(c.value)}</span></div>`).join('')}
+        ${s.illiquid.length ? `<div class="br-row"><span>No líquido</span><b>${money0(s.illiquid.reduce((a, x) => a + x.value, 0))}</b></div>
+          ${s.illiquid.map((x) => `<div class="br-row sub"><span>${x.name}</span><span>${money0(x.value)}</span></div>`).join('')}` : ''}
+        <div class="grid2">${field('Colchón', 'uc.cushion', l.uc.cushion, { unit: '€' })}<div class="uc-use"><button type="button" class="ghost-btn small-btn" data-uc-apply="today">Usar ${money0(cushion)}</button><small>como disponible hoy</small></div></div>
+      </div>
+      <div class="uc-sec">
+        <div class="br-row"><span>Ahorro previsto en 12 meses</span><b>${money0(s.saving)}</b></div>
+        ${s.projections.length ? s.projections.map((p) => `
+          <div class="line-sw sub"><span>${esc(p.name)}<small>${esc(p.ownerName)} · ${money0(p.year)}${p.count < 12 ? ` en ${p.count} ${p.count === 1 ? 'mes' : 'meses'}` : ''}</small></span><button type="button" class="switch ${p.on ? 'on' : ''}" data-uc-proj="${esc(p.id)}" role="switch" aria-checked="${p.on}" aria-label="${esc(p.name)}"><span></span></button></div>`).join('')
+          : '<p class="small muted">No hay proyecciones en este perfil.</p>'}
+        <div class="grid2">${field('% para amortizar', 'uc.share', l.uc.share, { unit: '%' })}<div class="uc-use"><button type="button" class="ghost-btn small-btn" data-uc-apply="yearly">Usar ${money0(yearly)}</button><small>como aportación anual</small></div></div>
+      </div>
+      <div class="uc-sec">
+        <div class="br-row"><span>Rentabilidad esperada del dinero líquido</span><b>${s.expReturn == null ? '—' : pct(s.expReturn)}</b></div>
+        ${s.classes.filter((c) => c.value > 0.5).map((c) => `<div class="br-row sub"><span>${c.name}</span><span>${c.hist != null ? `tuya ${pct(c.hist, 1)} · ` : ''}mercado ${c.market != null ? pct(c.market, 1) : '—'}</span></div>`).join('')}
+        ${s.expReturn != null ? `<button type="button" class="ghost-btn small-btn" data-uc-apply="return">Usar ${pct(s.expReturn)} en Previsiones</button>` : ''}
+        <p class="small muted">Media de lo que han rendido tus inversiones (TIR, con al menos un año de historia) y de una estimación de mercado a largo plazo, ponderada por lo que tienes en cada clase. Bruta, antes de impuestos.</p>
+      </div>
+      <p class="small muted">Datos de UnderCTRL del ${new Date(ucData.at).toLocaleString(LOCALE, { dateStyle: 'short', timeStyle: 'short' })}. <button type="button" class="link-inline" data-uc-refresh>Actualizar</button></p>
+    </div>`;
+}
+
+function bindUC(view, l) {
+  view.querySelectorAll('[data-uc-open]').forEach((b) => b.addEventListener('click', openUCSheet));
+  view.querySelectorAll('[data-uc-refresh]').forEach((b) => b.addEventListener('click', () => refreshUC({ interactive: true })));
+  if (!l) return;
+  view.querySelectorAll('[data-uc-loan]').forEach((b) => b.addEventListener('click', () => {
+    const x = ucData.loans.find((y) => y.key === b.dataset.ucLoan);
+    if (!x) return;
+    Object.assign(l, ucLoanFields(x));
+    persist(); render();
+    toast(x.loan?.principal ? 'Préstamo cargado de UnderCTRL' : 'Cargado el capital; completa plazo e interés', { warn: !x.loan?.principal });
+  }));
+  view.querySelectorAll('[data-uc-proj]').forEach((b) => b.addEventListener('click', () => {
+    const id = b.dataset.ucProj;
+    l.uc.off = l.uc.off.includes(id) ? l.uc.off.filter((x) => x !== id) : [...l.uc.off, id];
+    persist(); render();
+  }));
+  view.querySelectorAll('[data-uc-apply]').forEach((b) => b.addEventListener('click', () => {
+    const s = ucSummary(l);
+    const k = b.dataset.ucApply;
+    if (k === 'today') l.budget.today = Math.round(Math.max(0, s.liquid - (l.uc.cushion || 0)));
+    else if (k === 'yearly') l.budget.yearly = Math.round(Math.max(0, (s.saving * (l.uc.share ?? 100)) / 100));
+    else l.env.returnGross = Math.round(s.expReturn * 100) / 100;
+    persist(); render();
+    toast(k === 'return' ? 'Rentabilidad aplicada en Previsiones' : 'Aplicado al plan');
+  }));
+}
+
+function openUCSheet() {
+  const back = newSheet(true);
+  const draw = () => {
+    back.innerHTML = ucLink ? `
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="UnderCTRL">
+        <h2 class="sheet-title">UnderCTRL</h2>
+        <p class="small">Conectado como <b>${esc(ucLink.username)}</b></p>
+        <p class="small muted">${esc(ucError || (ucData ? `Datos del ${new Date(ucData.at).toLocaleString(LOCALE, { dateStyle: 'short', timeStyle: 'short' })}` : 'Pendiente'))}</p>
+        ${ucData ? `<p class="small muted">${ucData.loans.length} ${ucData.loans.length === 1 ? 'préstamo' : 'préstamos'}, ${ucData.proj.length} ${ucData.proj.length === 1 ? 'proyección' : 'proyecciones'} y ${ucData.profiles.length} ${ucData.profiles.length === 1 ? 'perfil' : 'perfiles'}.</p>` : ''}
+        <div class="sheet-actions">
+          <button type="button" class="ghost-btn danger" data-off>Desconectar</button>
+          <button type="button" class="ghost-btn" data-refresh>Actualizar</button>
+          <button type="button" class="done-btn" data-close>Cerrar</button>
+        </div>
+      </div>` : `
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="Conectar con UnderCTRL">
+        <h2 class="sheet-title">Conectar con UnderCTRL</h2>
+        <p class="small">Trae tus préstamos, tus proyecciones de ahorro, tu dinero líquido y lo que rinden tus inversiones. Necesitas la nube activada en UnderCTRL.</p>
+        <label class="field"><span>Usuario de UnderCTRL</span><input id="uc-user" type="text" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+        <label class="field"><span>Contraseña de UnderCTRL</span><input id="uc-pass" type="password" autocomplete="current-password" maxlength="128"></label>
+        <p class="small muted">La contraseña no se guarda: solo sirve para obtener aquí la clave que descifra tus datos, que no salen de tu dispositivo. SimulaCTRL solo lee; nunca cambia nada en UnderCTRL.</p>
+        <p class="small uc-err" id="uc-err"></p>
+        <div class="sheet-actions">
+          <button type="button" class="ghost-btn" data-close>Cancelar</button>
+          <button type="button" class="done-btn" data-go>Conectar</button>
+        </div>
+      </div>`;
+    back.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closeSheet));
+    back.querySelector('[data-off]')?.addEventListener('click', () => {
+      ucLink = null; ucData = null; ucError = '';
+      try { localStorage.removeItem(UC_LINK_KEY); localStorage.removeItem(UC_DATA_KEY); } catch (_) { /* sin almacenamiento */ }
+      closeSheet(); render(); toast('Desconectado de UnderCTRL');
+    });
+    back.querySelector('[data-refresh]')?.addEventListener('click', async () => { await refreshUC({ interactive: true }); draw(); });
+    back.querySelector('[data-go]')?.addEventListener('click', async (e) => {
+      const user = $('uc-user').value.trim();
+      const pass = $('uc-pass').value;
+      if (!user || !pass) { $('uc-err').textContent = 'Escribe el usuario y la contraseña.'; return; }
+      e.target.disabled = true;
+      e.target.textContent = 'Conectando…';
+      try {
+        const link = await ucDerive(user, pass);
+        if (!(await refreshUC({ link }))) throw new Error();
+        ucLink = link;
+        save(UC_LINK_KEY, link);
+        track('/underctrl-conectado');
+        closeSheet(); render();
+        toast('Conectado con UnderCTRL');
+      } catch (_) {
+        $('uc-err').textContent = ucError || UC_ERRORS.network;
+        e.target.disabled = false;
+        e.target.textContent = 'Conectar';
+      }
+    });
+  };
+  draw();
+}
+
 // ---------- Menú ⋯ ----------
 
 const MENU = [
   { label: 'Añadir préstamo', icon: 'plus', run: () => addLoan() },
+  { label: 'UnderCTRL', icon: 'link', run: () => openUCSheet() },
   { label: 'Opciones de visualización', icon: 'palette', run: () => openDisplaySheet() },
   { label: 'Borrar todo', icon: 'trash', run: () => confirmClear() },
   { label: 'Información', icon: 'info', run: () => openInfoSheet() },
@@ -1075,7 +1456,7 @@ function openInfoSheet() {
       <h2 class="sheet-title">SimulaCTRL</h2>
       <p class="small muted">Versión ${APP_VERSION} · by OmT Finance</p>
       <p class="small">Simula la amortización anticipada de préstamos e hipotecas: fijo, variable o mixto, con la deducción por vivienda habitual de tu comunidad y las previsiones del Euribor. Calcula el plan con menos carga financiera y lo compara con tus propios escenarios.</p>
-      <p class="small muted">Tus datos se guardan solo en este dispositivo. Del exterior solo se consulta el Euribor en el Banco Central Europeo. Es una simulación, no asesoramiento financiero ni fiscal.</p>
+      <p class="small muted">Tus datos se guardan solo en este dispositivo. Del exterior solo se consulta el Euribor en el Banco Central Europeo y, si lo conectas, se leen tus datos cifrados de UnderCTRL. Es una simulación, no asesoramiento financiero ni fiscal.</p>
       <div class="sheet-actions"><button type="button" class="done-btn" data-close>Cerrar</button></div>
     </div>`;
   back.querySelector('[data-close]').addEventListener('click', closeSheet);
@@ -1233,6 +1614,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 applyDisplay();
 render();
 refreshMarket();
+if (ucLink && (!ucData || Date.now() - ucData.at > 3600e3)) refreshUC(); // datos de UnderCTRL al día
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
