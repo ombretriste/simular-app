@@ -1,9 +1,10 @@
 // Cambia la versión al modificar archivos para que los móviles descarguen la nueva versión
-const CACHE = 'simular-v7';
+const CACHE = 'simular-v8';
 const ASSETS = [
   './',
   'index.html',
   'styles.css',
+  'boot.js',
   'engine.js',
   'app.js',
   'manifest.webmanifest',
