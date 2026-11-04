@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.1.x; novedades: 0.x.0.
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.4.2';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca datos de la app.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -122,7 +122,7 @@ function normLoan(l) {
     curve: 'analistas', returnGross: 2.5, savingsTax: 19, inflation: 2.3,
     custom: [2027, 2028, 2029, 2030, 2031].map((y) => ({ y, v: null })),
   };
-  return {
+  const out = {
     ...def, ...l,
     ded: { ...ded, ...(l.ded || {}), custom: { ...ded.custom, ...(l.ded?.custom || {}) } },
     excess: { ...excess, ...(l.excess || {}) },
@@ -131,6 +131,51 @@ function normLoan(l) {
     budget: { ...budget, ...(l.budget || {}) },
     env: { ...env, ...(l.env || {}) },
   };
+  return cleanLoan(out, def);
+}
+// Los datos guardados se validan al cargar: números finitos, opciones conocidas y fechas AAAA-MM.
+// Así un dato dañado no rompe la app ni acaba interpretado como HTML.
+const YM = /^\d{4}-(0[1-9]|1[0-2])$/;
+const finite = (v, d = 0) => (v !== '' && v !== null && Number.isFinite(Number(v)) ? Number(v) : d);
+const oneOf = (v, list, d) => (list.includes(v) ? v : d);
+const safeId = (v) => (typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null);
+const text = (v, d, max = 60) => (typeof v === 'string' && v.trim() ? v.slice(0, max) : d);
+function cleanLoan(o, def) {
+  for (const k of ['balance', 'years', 'months', 'tin', 'spread', 'insurance', 'feePct', 'feeAfterPct']) o[k] = finite(o[k]);
+  o.id = safeId(o.id) || uid();
+  o.name = text(o.name, def.name);
+  o.rateType = oneOf(o.rateType, ['fixed', 'variable', 'mixed'], 'fixed');
+  o.review = o.review === 6 || o.review === '6' ? 6 : 12;
+  o.lag = o.lag === 1 ? 1 : 2;
+  for (const k of ['nextPay', 'nextReview']) if (!YM.test(o[k])) o[k] = def[k];
+  if (!YM.test(o.feeUntil)) o.feeUntil = '';
+  o.insuranceDed = !!o.insuranceDed;
+  o.ucLoan = safeId(o.ucLoan) || '';
+  const d = o.ded;
+  d.on = !!d.on;
+  d.region = REGIONS[d.region] ? d.region : 'madrid';
+  d.holders = d.holders === 2 || d.holders === '2' ? 2 : 1;
+  for (const k of ['deductiblePct', 'lifetimeUsed']) d[k] = finite(d[k], k === 'deductiblePct' ? 100 : 0);
+  d.rules = (Array.isArray(d.rules) ? d.rules : []).filter((r) => r && safeId(r.id)).map((r) => ({ id: r.id, until: Math.round(finite(r.until)) }));
+  d.custom = { pct: finite(d.custom.pct), kind: oneOf(d.custom.kind, ['all', 'capital', 'interest'], 'all'), maxBase: finite(d.custom.maxBase), maxDed: finite(d.custom.maxDed) };
+  const e = o.excess;
+  e.on = !!e.on;
+  e.scope = oneOf(e.scope, ['year', 'total'], 'year');
+  for (const k of ['initial', 'freePct', 'feePct', 'done']) e[k] = finite(e[k]);
+  o.uc = { scope: safeId(o.uc.scope) || '', off: (Array.isArray(o.uc.off) ? o.uc.off : []).filter(safeId), cushion: finite(o.uc.cushion), share: finite(o.uc.share, 100) };
+  const b = o.budget;
+  for (const k of ['today', 'yearly', 'min']) b[k] = finite(b[k]);
+  b.month = Math.min(12, Math.max(1, Math.round(finite(b.month, 1))));
+  b.goal = oneOf(b.goal, ['carga', 'vp'], 'carga');
+  const v = o.env;
+  v.curve = CURVES[v.curve] ? v.curve : 'analistas';
+  for (const [k, dv] of [['returnGross', 2.5], ['savingsTax', 19], ['inflation', 2.3]]) v[k] = finite(v[k], dv);
+  v.custom = (Array.isArray(v.custom) ? v.custom : []).slice(0, 10).map((c, i) => ({ y: Math.round(finite(c?.y, 2027 + i)), v: c?.v == null || c.v === '' ? null : finite(c.v, null) }));
+  const items = (list) => (Array.isArray(list) ? list : []).filter((i) => i && YM.test(i.ym)).map((i) => ({ ym: i.ym, amount: finite(i.amount) }));
+  o.scenarios = (Array.isArray(o.scenarios) ? o.scenarios : []).filter((s) => s && safeId(s.id))
+    .map((s) => ({ id: s.id, name: text(s.name, 'Escenario'), mode: oneOf(s.mode, ['term', 'payment'], 'term'), items: items(s.items) }));
+  o.rec = o.rec && Array.isArray(o.rec.items) ? { key: String(o.rec.key || ''), mode: oneOf(o.rec.mode, ['term', 'payment'], 'term'), items: items(o.rec.items) } : null;
+  return o;
 }
 function normData(d) {
   d = d && typeof d === 'object' ? d : {};
@@ -1034,6 +1079,8 @@ const UC_DATA_KEY = 'simular:ucData';
 const UC_ITERATIONS = 310000;
 let ucLink = load(UC_LINK_KEY, null); // { username, user, auth, key }
 let ucData = load(UC_DATA_KEY, null); // resumen: ver ucExtract
+if (ucData && !(Array.isArray(ucData.profiles) && Array.isArray(ucData.groups) && Array.isArray(ucData.loans) && Array.isArray(ucData.proj) && ucData.assets && ucData.flows)) ucData = null;
+if (ucLink && !(/^[a-f0-9]{64}$/.test(ucLink.user) && /^[a-f0-9]{64}$/.test(ucLink.auth) && typeof ucLink.key === 'string')) ucLink = null;
 let ucError = '';
 let ucBusy = false;
 
@@ -1099,67 +1146,81 @@ async function refreshUC({ interactive = false, link = ucLink } = {}) {
 }
 
 // --- Resumen de los datos de UnderCTRL (solo lo que usa SimulaCTRL) ---
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const ucDay = (iso) => Math.round(new Date(`${iso}T12:00:00`).getTime() / 864e5);
+// Préstamo de UnderCTRL: solo los campos que usa SimulaCTRL, con su tipo
+const ucCleanLoan = (L) => (L && typeof L === 'object' ? {
+  principal: finite(L.principal), start: ISO.test(L.start) ? L.start : '', years: finite(L.years),
+  rateType: L.rateType === 'variable' ? 'variable' : 'fixed', rate: finite(L.rate), spread: finite(L.spread),
+  review: L.review === 6 ? 6 : 12, initialRate: L.initialRate == null || L.initialRate === '' ? null : finite(L.initialRate, null),
+  initialMonths: Math.max(1, Math.round(finite(L.initialMonths, 12))), lag: L.lag === 1 ? 1 : 2,
+} : null);
 function ucExtract(d) {
   const today = new Date();
   const todayIso = today.toISOString().slice(0, 10);
-  const profiles = (d.profiles || []).map((p) => ({ id: p.id, name: p.name || 'Persona', common: !!p.common }));
+  const src = (Array.isArray(d?.profiles) ? d.profiles : []).filter((p) => p && safeId(p.id));
+  const profiles = src.map((p) => ({ id: p.id, name: text(p.name, 'Persona'), common: !!p.common }));
   const groups = (Array.isArray(d.groups) && d.groups.length ? d.groups : [{ id: 'total', name: 'Total', members: null }])
-    .map((g) => ({ id: g.id, name: g.name || 'Total', members: Array.isArray(g.members) ? g.members : null }));
+    .filter((g) => g && safeId(g.id))
+    .map((g) => ({ id: g.id, name: text(g.name, 'Total'), members: Array.isArray(g.members) ? g.members.filter(safeId) : null }));
   const loans = [];
   const proj = [];
   const assets = {};
   const flows = {};
-  for (const p of d.profiles || []) {
-    const cats = p.cats || {};
+  for (const p of src) {
+    const cats = p.cats && typeof p.cats === 'object' ? p.cats : {};
+    const arr = (k) => (Array.isArray(cats[k]) ? cats[k].filter((i) => i && typeof i === 'object') : []);
     // Préstamos: los compartidos (mismo grupo) son uno solo con varias personas
-    for (const i of cats.loans || []) {
-      const key = i.shared?.group || i.id;
+    for (const i of arr('loans')) {
+      const key = safeId(i.shared?.group) || safeId(i.id);
+      if (!key) continue;
       let x = loans.find((l) => l.key === key);
       if (!x) {
-        x = { key, name: i.name || 'Préstamo', owners: [], pct: {}, total: i.shared ? Number(i.shared.total) || 0 : Number(i.amount) || 0, loan: i.loan || null };
+        x = { key, name: text(i.name, 'Préstamo'), owners: [], pct: {}, total: finite(i.shared ? i.shared.total : i.amount), loan: ucCleanLoan(i.loan) };
         loans.push(x);
       }
       x.owners.push(p.id);
-      x.pct[p.id] = i.shared ? Number(i.shared.pct) || 0 : 100;
-      if (!x.loan && i.loan) x.loan = i.loan;
+      x.pct[p.id] = i.shared ? finite(i.shared.pct) : 100;
+      if (!x.loan && i.loan) x.loan = ucCleanLoan(i.loan);
     }
     // Proyecciones: ahorro esperado de los próximos 24 meses (null fuera de la proyección)
-    for (const pr of cats.projections || []) {
+    for (const pr of arr('projections')) {
+      if (!safeId(pr.id) || !Number.isInteger(pr.startYear) || !(pr.years >= 1 && pr.years <= 30)) continue;
       const cur = (today.getFullYear() - pr.startYear) * 12 + today.getMonth();
-      const sumRows = (rows, m) => (rows || []).reduce((a, r) => a + (Number(r.v?.[m]) || 0), 0);
+      const sumRows = (rows, m) => (Array.isArray(rows) ? rows : []).reduce((a, r) => a + finite(r?.v?.[m]), 0);
       const months = Array.from({ length: 24 }, (_, k) => {
         const m = cur + k;
         if (m < (pr.firstMonth || 0) || m >= pr.years * 12) return null;
-        if (pr.plan?.[m] != null) return Number(pr.plan[m]);
+        if (pr.plan?.[m] != null) return finite(pr.plan[m]);
         const dim = new Date(pr.startYear + Math.floor(m / 12), (m % 12) + 1, 0).getDate();
-        return sumRows(pr.income, m) - sumRows(pr.expense, m) - (Number(pr.dailyTarget) || 0) * dim;
+        return finite(sumRows(pr.income, m) - sumRows(pr.expense, m) - finite(pr.dailyTarget) * dim);
       });
-      proj.push({ id: pr.id, owner: p.id, name: pr.name || 'Proyección', months });
+      proj.push({ id: pr.id, owner: p.id, name: text(pr.name, 'Proyección'), months });
     }
     // Patrimonio por clase: líquido y no líquido (como «Activos líquidos» de UnderCTRL)
-    const s = (list) => (list || []).reduce((a, i) => a + (Number(i.amount) || 0), 0);
-    const live = (cats.stocks || []).filter((i) => !(i.sellDate || i.sellPrice));
+    const s = (list) => list.reduce((a, i) => a + finite(i.amount), 0);
+    const live = arr('stocks').filter((i) => !(i.sellDate || i.sellPrice));
     assets[p.id] = {
-      banks: s(cats.banks), deposits: s(cats.deposits), funds: s(cats.funds), crypto: s(cats.crypto),
+      banks: s(arr('banks')), deposits: s(arr('deposits')), funds: s(arr('funds')), crypto: s(arr('crypto')),
       stocks: s(live.filter((i) => i.available !== false)), stocksLocked: s(live.filter((i) => i.available === false)),
-      options: s(cats.options), pensions: s(cats.pensions), housing: s(cats.housing), cards: s(cats.cards),
+      options: s(arr('options')), pensions: s(arr('pensions')), housing: s(arr('housing')), cards: s(arr('cards')),
     };
     // Flujos con fecha para la rentabilidad anualizada: [día, importe] (compras negativas)
     const f = (flows[p.id] = {});
     for (const k of ['deposits', 'funds', 'crypto', 'pensions']) {
-      for (const i of cats[k] || []) {
-        const movs = i.movements || [];
-        if (!movs.length || movs.some((m) => !m.date)) continue;
-        const list = movs.map((m) => [ucDay(m.date), (m.type === 'in' ? -1 : 1) * ((Number(m.amount) || 0) + (Number(m.company) || 0))]);
-        if (i.amount > 0) list.push([ucDay(i.valuedAt || todayIso), Number(i.amount)]);
+      for (const i of arr(k)) {
+        const movs = Array.isArray(i.movements) ? i.movements : [];
+        if (!movs.length || movs.some((m) => !ISO.test(m?.date))) continue;
+        const list = movs.map((m) => [ucDay(m.date), (m.type === 'in' ? -1 : 1) * (finite(m.amount) + finite(m.company))]);
+        if (finite(i.amount) > 0) list.push([ucDay(ISO.test(i.valuedAt) ? i.valuedAt : todayIso), finite(i.amount)]);
         (f[k] ||= []).push(...list);
       }
     }
     for (const i of live) {
-      const fx = i.currency === 'EUR' || !i.currency ? 1 : Number(i.buyFx) || 0;
-      if (!i.qty || !i.buyPrice || !i.buyDate || !fx || !(i.amount > 0)) continue;
-      (f.stocks ||= []).push([ucDay(i.buyDate), -i.qty * i.buyPrice * fx], [ucDay(todayIso), Number(i.amount)]);
+      const fx = i.currency === 'EUR' || !i.currency ? 1 : finite(i.buyFx);
+      const cost = finite(i.qty) * finite(i.buyPrice) * fx;
+      if (!(cost > 0) || !ISO.test(i.buyDate) || !(finite(i.amount) > 0)) continue;
+      (f.stocks ||= []).push([ucDay(i.buyDate), -cost], [ucDay(todayIso), finite(i.amount)]);
     }
   }
   return { at: Date.now(), profiles, groups, loans, proj, assets, flows };

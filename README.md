@@ -1,6 +1,6 @@
 # SimulaCTRL
 
-Versión 0.4.1 · by OmT Finance
+Versión 0.4.2 · by OmT Finance
 
 App web (PWA) que simula la amortización anticipada de préstamos e hipotecas, basada en el simulador de
 UnderCTRL. Mismo estilo que las demás apps de OmT Finance, en turquesa y arena. Los datos se guardan solo en
@@ -35,7 +35,13 @@ el dispositivo (`localStorage`, clave `simular:data`); lo único que se consulta
 
 - `vercel.json` envía una política de seguridad (CSP), como UnderCTRL y DocCTRL: solo se ejecuta el código de la
   propia app y solo se conecta a su servidor, al BCE (`data-api.ecb.europa.eu`, Euribor) y a la nube de
-  UnderCTRL (`finanzas-app-gules-three.vercel.app`). No se puede incrustar en otra web; `nosniff` y `no-referrer`.
+  UnderCTRL (`finanzas-app-gules-three.vercel.app`). No se puede incrustar en otra web; `nosniff`, `no-referrer` y sin cámara, micrófono ni ubicación
+  (`Permissions-Policy`).
+- Los datos se validan al cargar (`cleanLoan` para lo guardado, `ucExtract` para lo que llega de UnderCTRL):
+  solo pasan identificadores, textos acotados, números finitos, opciones conocidas y fechas válidas. Los textos
+  se escapan siempre al mostrarse.
+- En el dispositivo los datos no están cifrados (`localStorage`). El vínculo con UnderCTRL guarda las claves
+  derivadas, no la contraseña: quien tenga el dispositivo puede leer UnderCTRL hasta que se desconecte.
 - No hay scripts en línea: lo que va antes de pintar está en `boot.js`. No añadas `<script>` en línea ni
   atributos `on…=`, o la CSP los bloqueará.
 
